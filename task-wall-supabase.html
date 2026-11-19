@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Task Wall</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:40px;background:#f7f5ef;color:#34342f;font-family:'Trebuchet MS',sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:35px;gap:16px}h1{font-size:32px;margin:0}.subtitle{color:#888;margin-top:7px}
+button{border:0;cursor:pointer;border-radius:9px;padding:10px 16px;font-weight:bold;transition:.2s}button:hover:not(:disabled){opacity:.82;transform:translateY(-1px)}button:disabled{opacity:.5;cursor:not-allowed}
+.primary{background:#444b3d;color:white}.secondary{background:#e9e7df;color:#444}
+.boards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:25px;align-items:start}
+.board{background:white;border-radius:15px;padding:20px;box-shadow:0 4px 15px #0000000a;border:1px solid #eceae3}
+.board-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:10px}.board h2{margin:0;font-size:21px}.board-status{font-size:11px;color:#999;margin-top:5px}
+.task{padding:13px;border-radius:10px;margin-bottom:10px;display:flex;gap:11px;align-items:flex-start;overflow-wrap:anywhere}
+.task input[type=checkbox]{margin-top:4px;accent-color:#596b4c;cursor:pointer;width:17px;height:17px;flex-shrink:0}
+.task-content{flex:1}.task-title{font-weight:bold;font-size:14px}.task-description{font-size:13px;margin-top:5px;line-height:1.5;color:#555}
+.completed{opacity:.55}.completed .task-title{text-decoration:line-through}.task-date{font-size:10px;color:#666;margin-top:7px}
+.edit-panel{border-top:1px solid #eee;padding-top:15px;margin-top:15px}.edit-panel input,.edit-panel textarea,.edit-panel select,.modal input{width:100%;padding:11px;border:1px solid #ddd;border-radius:8px;margin:8px 0;font-family:inherit;background:white}
+.edit-panel textarea{resize:vertical;min-height:65px}.edit-actions{display:flex;gap:8px;flex-wrap:wrap}.locked{color:#c17c42;font-size:11px;margin-bottom:12px}
+.empty{text-align:center;color:#aaa;font-size:13px;padding:20px 0}.color-label{font-size:12px;color:#777;margin-top:5px;display:block}
+.history{border-top:1px solid #eee;margin-top:18px;padding-top:12px}.history summary{cursor:pointer;color:#777;font-size:13px;font-weight:bold;user-select:none}
+.history-item{padding:10px;margin-top:9px;border-radius:8px;background:#f2f1ed;font-size:12px;overflow-wrap:anywhere}
+.history-title{font-weight:bold;color:#555}.history-description{color:#888;margin-top:4px;line-height:1.4}.history-date{color:#aaa;font-size:10px;margin-top:6px}.history-empty{color:#aaa;font-size:12px;margin-top:12px}
+.danger-zone{border-top:1px dashed #eee;margin-top:32px;padding-top:18px;display:flex;justify-content:flex-end}
+.delete{background:transparent;color:#b58b86;font-size:10px;padding:5px 8px;border:1px solid #eee4e2}
+.modal{position:fixed;inset:0;background:#0007;display:none;justify-content:center;align-items:center;z-index:10}.modal-content{background:white;padding:25px;border-radius:15px;width:min(350px,90%)}
+#app{display:none}
+.auth-wrap{max-width:380px;margin:12vh auto 0;background:white;padding:26px;border-radius:15px;box-shadow:0 4px 20px #0000000a;border:1px solid #eceae3}.auth-wrap h2{margin-top:0}.auth-wrap p{color:#777;font-size:13px;line-height:1.5}
+.auth-wrap input{width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;margin:8px 0 12px;font-family:inherit}.auth-wrap button{width:100%}.notice.info{color:#777}.notice{font-size:12px;color:#b0554a;margin-top:12px;min-height:18px}
+@media(max-width:600px){body{padding:20px}header{align-items:flex-start}h1{font-size:25px}}
+</style>
+</head>
+<body>
+<div class="auth-wrap" id="loginPanel">
+  <h2>📌 The Task Wall</h2>
+  <p>Enter the password to continue.</p>
+  <form id="loginForm" onsubmit="return false">
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" autofocus>
+    <button class="primary" type="submit" id="unlockBtn">Unlock</button>
+  </form>
+  <div class="notice" id="loginNotice" role="alert"></div>
+</div>
+<div class="auth-wrap" id="configError" style="display:none">
+  <h2>Supabase setup needed</h2>
+  <p>Open this HTML file and replace the SUPABASE_URL and SUPABASE_ANON_KEY placeholders near the top of the script with your project's Project URL and publishable (anon) key.</p>
+</div>
+<div id="app">
+<header>
+  <div><h1>📌 The Task Wall</h1><div class="subtitle">Little things that need doing.</div></div>
+  <button class="primary" id="newBoardBtn">+ New Board</button>
+</header>
+<div class="boards" id="boards"></div>
+</div>
+<div class="modal" id="modal" aria-hidden="true">
+  <div class="modal-content">
+    <h2>Create a board</h2><p>Whose board are we making?</p>
+    <input id="personName" placeholder="Enter their name..." autocomplete="off">
+    <div class="edit-actions"><button class="primary" id="createBoardBtn">Create Board</button><button class="secondary" id="cancelModalBtn">Cancel</button></div>
+  </div>
+</div>
+<script>
+// ---------- Settings ----------
+const SUPABASE_URL = "https://sbjglgbolcgdkshfcvbe.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_KPLRaoaQUEoqF7CHDQtH2A_EC1kIwOi";
+// Visitors only type the password. This hidden email must match the user you create in Supabase (Authentication -> Users).
+const SHARED_EMAIL = "taskwall@example.com";
+const TASK_EXPIRATION = 1000; // TEST: 1 second. Production: 24 * 60 * 60 * 1000.
+const TASK_COLORS = {yellow:"#fff1ad",pink:"#f7dce3",blue:"#dceaf7",green:"#dcebd5",purple:"#e9def5",orange:"#f8e1c9",gray:"#e9e9e6"};
+
+const $ = id => document.getElementById(id);
+const configured = !SUPABASE_URL.startsWith("PASTE_") && !SUPABASE_ANON_KEY.startsWith("PASTE_");
+// localStorage with an in-memory fallback (some viewers/sandboxes block localStorage)
+const store = (()=>{const mem={};let ok=true;
+  try{localStorage.setItem("__t","1");localStorage.removeItem("__t");}catch(e){ok=false;}
+  return {get(k){if(ok){try{return localStorage.getItem(k);}catch(e){}}return k in mem?mem[k]:null;},
+          set(k,v){if(ok){try{localStorage.setItem(k,v);return;}catch(e){}}mem[k]=String(v);}};})();
+function uuid(){const b=crypto.getRandomValues(new Uint8Array(16));b[6]=b[6]&15|64;b[8]=b[8]&63|128;
+  const h=[...b].map(x=>x.toString(16).padStart(2,"0")).join("");return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}
+// A per-browser id distinguishes editors even though everyone shares one login.
+let sessionToken = store.get("taskWallSessionToken");
+if(!sessionToken){sessionToken=uuid();store.set("taskWallSessionToken",sessionToken);}
+
+let sb=null,user=null,boards=[],channel=null,started=false,loading=false,pending=false,adding=false,loadErrorShown=false;
+function escapeHTML(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function formatDate(t){return new Date(t).toLocaleString([], {month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",second:"2-digit"});}
+function setNotice(msg,info){const n=$("loginNotice");n.textContent=msg;n.classList.toggle("info",!!info);}
+
+// ---------- Password gate (listeners attached first so they always work) ----------
+async function attemptLogin(){
+  const input=$("password"),btn=$("unlockBtn"),pw=input.value.trim();
+  if(!pw){setNotice("Please enter the password.");return;}
+  if(!sb){setNotice(configured?"Couldn't load the Supabase library. Check your connection and reload.":"Supabase isn't configured yet.");return;}
+  btn.disabled=true;setNotice("Checking...",true);
+  try{
+    const {data,error}=await sb.auth.signInWithPassword({email:SHARED_EMAIL,password:pw});
+    if(error){setNotice(error.status===400||/invalid login/i.test(error.message)?"Incorrect password.":error.message);input.select();return;}
+    user=data.user;input.value="";setNotice("");await startApp();
+  }catch(e){setNotice("Error: "+e.message);}
+  finally{btn.disabled=false;}
+}
+$("unlockBtn").addEventListener("click",attemptLogin);
+$("password").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();attemptLogin();}});
+window.addEventListener("error",e=>{if(!$("loginNotice").textContent)setNotice("Error: "+e.message);});
+function showLogin(){
+  user=null;$("app").style.display="none";$("loginPanel").style.display="block";$("loginForm").style.visibility="visible";
+}
+
+// ---------- Data ----------
+async function fetchAndRender(){
+  const [b,t,l]=await Promise.all([
+    sb.from("boards").select("*").order("created_at",{ascending:true}),
+    sb.from("tasks").select("*").order("created_at",{ascending:true}),
+    sb.from("board_locks").select("*")]);
+  const err=b.error||t.error||l.error;
+  if(err){
+    console.error(err);
+    if(/jwt/i.test(err.message)){showLogin();return;}
+    if(!loadErrorShown){loadErrorShown=true;alert("Could not load the board: "+err.message);}
+    return;
+  }
+  loadErrorShown=false;
+  const now=Date.now();
+  boards=b.data.map(bd=>{
+    const all=t.data.filter(x=>x.board_id===bd.id);
+    return {...bd,
+      lock:l.data.find(k=>k.board_id===bd.id&&new Date(k.expires_at).getTime()>now)||null,
+      tasks:all.filter(x=>!x.completed_at||now-new Date(x.completed_at).getTime()<TASK_EXPIRATION),
+      history:all.filter(x=>x.completed_at&&now-new Date(x.completed_at).getTime()>=TASK_EXPIRATION)};
+  });
+  render();
+}
+// One load at a time; if something changes mid-load, load again afterwards.
+async function loadBoards(){
+  if(loading){pending=true;return;}
+  loading=true;
+  try{do{pending=false;await fetchAndRender();}while(pending);}
+  catch(e){console.error(e);}
+  finally{loading=false;}
+}
+// Re-load only when a completed task or an editing lock crosses its expiry time
+// (not on a blind timer), so typing is never interrupted needlessly.
+function tick(){
+  if(!user||loading)return;
+  const now=Date.now();
+  const stale=boards.some(b=>(b.lock&&new Date(b.lock.expires_at).getTime()<=now)||
+    b.tasks.some(t=>t.completed_at&&now-new Date(t.completed_at).getTime()>=TASK_EXPIRATION));
+  if(stale)loadBoards();
+}
+async function startApp(){
+  $("loginPanel").style.display="none";$("app").style.display="block";
+  await loadBoards();
+  if(started)return;started=true;
+  channel=sb.channel("task-wall-live")
+    .on("postgres_changes",{event:"*",schema:"public",table:"boards"},loadBoards)
+    .on("postgres_changes",{event:"*",schema:"public",table:"tasks"},loadBoards)
+    .on("postgres_changes",{event:"*",schema:"public",table:"board_locks"},loadBoards)
+    .subscribe();
+  setInterval(tick,250);
+}
+
+// ---------- Actions ----------
+function openModal(){$("modal").style.display="flex";$("modal").setAttribute("aria-hidden","false");$("personName").focus();}
+function closeModal(){$("modal").style.display="none";$("modal").setAttribute("aria-hidden","true");}
+async function createBoard(){
+  const name=$("personName").value.trim();if(!name){alert("Please enter a name!");return;}
+  const {error}=await sb.from("boards").insert({name});
+  if(error){alert("Could not create board: "+error.message);return;}
+  $("personName").value="";closeModal();await loadBoards();
+}
+async function editBoard(id){
+  const {data,error}=await sb.rpc("acquire_board_lock",{p_board_id:id,p_session_id:sessionToken});
+  if(error){alert("Could not acquire editing lock: "+error.message);return;}
+  if(!data)alert("Someone else is currently editing this board!");
+  await loadBoards();
+}
+async function stopEditing(id){
+  const {error}=await sb.rpc("release_board_lock",{p_board_id:id,p_session_id:sessionToken});
+  if(error)alert("Could not release editing lock: "+error.message);
+  await loadBoards();
+}
+async function addTask(id){
+  const b=boards.find(x=>x.id===id);if(!b||b.lock?.lock_token!==sessionToken||adding)return;
+  const titleEl=$("title-"+id),descEl=$("desc-"+id);
+  const title=titleEl.value.trim(),description=descEl.value.trim(),color=$("color-"+id).value;
+  if(!title){alert("Give the task a title!");titleEl.focus();return;}
+  adding=true;
+  try{
+    // Re-acquiring also extends the 5-minute editing lock (and confirms we still hold it).
+    const {data:held,error:lockErr}=await sb.rpc("acquire_board_lock",{p_board_id:id,p_session_id:sessionToken});
+    if(lockErr){alert("Could not add task: "+lockErr.message);return;}
+    if(!held){alert("Your editing session expired and someone else took over this board.");await loadBoards();return;}
+    const {error}=await sb.from("tasks").insert({board_id:id,title,description,color});
+    if(error){alert("Could not add task: "+error.message);return;}
+    titleEl.value="";descEl.value="";
+    await loadBoards();
+    $("title-"+id)?.focus();
+  }finally{adding=false;}
+}
+async function toggleTask(taskId,checked){
+  const {error}=await sb.from("tasks").update({completed_at:checked?new Date().toISOString():null}).eq("id",taskId);
+  if(error){alert("Could not update task: "+error.message);}
+  await loadBoards();
+}
+async function deleteBoard(id){
+  const b=boards.find(x=>x.id===id);if(!b)return;
+  if(!confirm(`Permanently delete ${b.name}'s board and all its tasks and history?`))return;
+  if(prompt(`Type DELETE to confirm removal of ${b.name}'s board.`)!=="DELETE"){alert("Deletion cancelled.");return;}
+  const {error}=await sb.from("boards").delete().eq("id",id);
+  if(error){alert("Could not delete board: "+error.message);return;}
+  await loadBoards();
+}
+
+// ---------- Rendering ----------
+function render(){
+  const container=$("boards");
+  // Keep expanded History sections, half-typed text and focus when a live update re-renders the page.
+  const openHistory=new Set([...container.querySelectorAll("details.history[open]")].map(d=>d.dataset.board));
+  const saved={};container.querySelectorAll('[id^="title-"],[id^="desc-"],[id^="color-"]').forEach(el=>saved[el.id]=el.value);
+  const ae=document.activeElement,focusId=ae&&container.contains(ae)?ae.id:null;
+  let selStart=null,selEnd=null;try{selStart=ae.selectionStart;selEnd=ae.selectionEnd;}catch(e){}
+  container.innerHTML="";
+  boards.forEach(board=>{
+    const editing=board.lock?.lock_token===sessionToken,locked=board.lock&&!editing;
+    const card=document.createElement("section");card.className="board";
+    const tasks=board.tasks.map(t=>`
+      <div class="task ${t.completed_at?"completed":""}" style="background:${TASK_COLORS[t.color]||TASK_COLORS.yellow}">
+        <input type="checkbox" data-action="toggle" data-task="${t.id}" ${t.completed_at?"checked":""} aria-label="Complete ${escapeHTML(t.title)}">
+        <div class="task-content"><div class="task-title">${escapeHTML(t.title)}</div>
+        ${t.description?`<div class="task-description">${escapeHTML(t.description)}</div>`:""}
+        ${t.completed_at?`<div class="task-date">Completed — awaiting archive</div>`:""}</div>
+      </div>`).join("")||`<div class="empty">Nothing on the list. Lucky you!</div>`;
+    const history=[...board.history].sort((a,b)=>new Date(a.completed_at)-new Date(b.completed_at));
+    const historyHTML=history.length?history.map(t=>`<div class="history-item"><div class="history-title">✓ ${escapeHTML(t.title)}</div>
+      ${t.description?`<div class="history-description">${escapeHTML(t.description)}</div>`:""}
+      <div class="history-date">Completed: ${formatDate(t.completed_at)}<br>Added: ${formatDate(t.created_at)}</div></div>`).join(""):`<div class="history-empty">No completed tasks yet.</div>`;
+    card.innerHTML=`
+      <div class="board-header"><div><h2>${escapeHTML(board.name)}'s Board</h2><div class="board-status">${board.tasks.length} active task(s)</div></div>
+      <button class="secondary" data-action="edit" data-board="${board.id}" ${editing||locked?"disabled":""}>${locked?"Locked":editing?"Editing":"Edit"}</button></div>
+      ${locked?'<div class="locked">🔒 Currently being edited by another user.</div>':""}
+      ${tasks}
+      <details class="history" data-board="${board.id}" ${openHistory.has(String(board.id))?"open":""}><summary>📜 History (${history.length})</summary>${historyHTML}</details>
+      ${editing?`<div class="edit-panel"><strong>Add a task</strong>
+        <input id="title-${board.id}" placeholder="Task title..." autocomplete="off">
+        <textarea id="desc-${board.id}" placeholder="Describe what needs doing..."></textarea>
+        <label class="color-label" for="color-${board.id}">Task color</label>
+        <select id="color-${board.id}"><option value="yellow">🟡 Yellow</option><option value="pink">🩷 Pink</option><option value="blue">🔵 Blue</option><option value="green">🟢 Green</option><option value="purple">🟣 Purple</option><option value="orange">🟠 Orange</option><option value="gray">⚪ Gray</option></select>
+        <div class="edit-actions"><button class="primary" data-action="add" data-board="${board.id}">+ Add Task</button><button class="secondary" data-action="done" data-board="${board.id}">Done</button></div>
+        <div class="danger-zone"><button class="delete" data-action="delete" data-board="${board.id}">Delete board</button></div>
+      </div>`:""}`;
+    container.appendChild(card);
+  });
+  Object.entries(saved).forEach(([id,v])=>{const el=$(id);if(el)el.value=v;});
+  if(focusId){const el=$(focusId);if(el){el.focus();try{if(selStart!==null)el.setSelectionRange(selStart,selEnd);}catch(e){}}}
+}
+
+$("newBoardBtn").addEventListener("click",openModal);
+$("createBoardBtn").addEventListener("click",createBoard);
+$("cancelModalBtn").addEventListener("click",closeModal);
+$("personName").addEventListener("keydown",e=>{if(e.key==="Enter")createBoard();});
+$("boards").addEventListener("click",e=>{
+  const btn=e.target.closest("button[data-action]");if(!btn)return;
+  const id=Number(btn.dataset.board),action=btn.dataset.action;
+  if(action==="edit")editBoard(id);if(action==="done")stopEditing(id);if(action==="add")addTask(id);if(action==="delete")deleteBoard(id);
+});
+$("boards").addEventListener("keydown",e=>{
+  // Enter in the title box adds the task; Ctrl/Cmd+Enter does it from the description box (plain Enter there stays a new line).
+  const m=/^(title|desc)-(.+)$/.exec(e.target.id||"");
+  if(!m||e.key!=="Enter"||e.isComposing)return;
+  if(m[1]==="desc"&&!(e.ctrlKey||e.metaKey))return;
+  e.preventDefault();addTask(Number(m[2]));
+});
+$("boards").addEventListener("change",e=>{
+  if(e.target.matches('input[data-action="toggle"]'))toggleTask(Number(e.target.dataset.task),e.target.checked);
+});
+
+// ---------- Start: restore a remembered login, otherwise show the password screen ----------
+async function init(){
+  if(!configured){$("loginPanel").style.display="none";$("configError").style.display="block";return;}
+  if(!window.supabase){setNotice("Couldn't load the Supabase library. Check your connection and reload.");return;}
+  sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+  sb.auth.onAuthStateChange(evt=>{if(evt==="SIGNED_OUT")showLogin();});
+  $("loginForm").style.visibility="hidden"; // avoid flashing the form for people who are already logged in
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    if(session){user=session.user;await startApp();}
+  }catch(e){console.error(e);}
+  finally{if(!user)$("loginForm").style.visibility="visible";}
+  if(!user)$("password").focus();
+}
+init();
+</script>
+</body>
+</html>
